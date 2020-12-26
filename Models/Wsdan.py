@@ -81,41 +81,23 @@ class BAP(nn.Module):
 
 # WS-DAN: Weakly Supervised Data Augmentation Network for FGVC
 class WSDAN(nn.Module):
-    def __init__(self, num_classes, M=32, net='inception_mixed_6e', pretrained=False):
+    def __init__(self, num_classes, M=32, net, pretrained=False):
         super(WSDAN, self).__init__()
         self.num_classes = num_classes
         self.M = M
         self.net = net
 
         # Network Initialization
-        if 'xception' in net:
-            self.features = xception()
-            self.num_features = 2048
 
-            if pretrained:
-                ckpt = torch.load(pretrained, map_location='cpu')
-                state_dict = dict()
-
-                for k, v in ckpt["state_dict"].items():
-                    if k.startswith("model."):
-                        k = k[6:]
-                    elif k.startswith("module."):
-                        k = k[7:]
-                    state_dict[k] = v
-
-                self.features.load_state_dict(state_dict, strict=False)
-        elif 'efficientnet' in net:
-            if pretrained:
-                self.EFN = ef.from_pretrained(net)
-                self.features = self.EFN.extract_features
-                self.num_features = self.EFN._fc.in_features
-            else:
-                self.EFN = ef.from_name('efficientnet-b0')
-                self.EFN.set_swish()
-                self.features = self.EFN.extract_features
-                self.num_features = 1536
+        if pretrained:
+            self.EFN = ef.from_pretrained(net)
+            self.features = self.EFN.extract_features
+            self.num_features = self.EFN._fc.in_features
         else:
-            raise ValueError('Unsupported net: %s' % net)
+            self.EFN = ef.from_name('efficientnet-b0')
+            self.EFN.set_swish()
+            self.features = self.EFN.extract_features
+            self.num_features = 1536
 
         # Attention Maps
         self.attentions = BasicConv2d(self.num_features, self.M, kernel_size=1)
@@ -133,10 +115,7 @@ class WSDAN(nn.Module):
 
         # Feature Maps, Attention Maps and Feature Matrix
         feature_maps = self.features(x)
-        if self.net != 'inception_mixed_7c':
-            attention_maps = self.attentions(feature_maps)
-        else:
-            attention_maps = feature_maps[:, :self.M, ...]
+        attention_maps = self.attentions(feature_maps)
 
         if dropout:
             feature_matrix, feature_matrixd = self.bap(feature_maps, attention_maps, dropout)

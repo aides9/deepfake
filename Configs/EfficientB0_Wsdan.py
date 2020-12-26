@@ -2,7 +2,7 @@
 # Training Config
 ##################################################
 epochs = 60                 # number of epochs
-batch_size = 10             # batch size
+batch_size = 16             # batch size
 learning_rate = 1e-3        # initial learning rate
 
 ##################################################
