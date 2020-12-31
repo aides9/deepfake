@@ -1,10 +1,10 @@
 import sys
 import torch
 import torch.nn.functional as F
-from torch import nn
 import torch.backends.cudnn as cudnn
-from torch.autograd import Variable
 import torchvision.models as models
+from torch import nn
+from torch.autograd import Variable
 
 class VggExtractor(nn.Module):
     def __init__(self, train=False):
@@ -197,7 +197,7 @@ class CapsuleNet(nn.Module):
         z = self.fea_ext(x)
         z = self.routing_stats(z, random, dropout=dropout)
 
-        classes = F.sigmoid(z)
+        classes = torch.sigmoid(z)
         class_ = classes.detach()
         class_ = class_.mean(dim=1)
 
@@ -209,11 +209,11 @@ class CapsuleLoss(nn.Module):
         self.bi_cross_entropy_loss = nn.BCEWithLogitsLoss().cuda()
 
     def forward(self, classes, labels):
-        loss_t = self.bi_cross_entropy_loss(F.sigmoid(classes[0,0,:]), labels)
+        loss_t = self.bi_cross_entropy_loss(torch.sigmoid(classes[0,0,:]), labels)
 
         for i in range(classes.size(1) - 1):
 
-            loss_t = loss_t + self.bi_cross_entropy_loss(F.sigmoid(classes[0,i+1,:]), labels)
+            loss_t = loss_t + self.bi_cross_entropy_loss(torch.sigmoid(classes[0,i+1,:]), labels)
         
         return loss_t
 
