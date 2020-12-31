@@ -14,7 +14,7 @@ def gridshow(loader):
     images = np.clip(grid.permute(1, 2, 0), 0, 1)
     plt.imshow(images)
     plt.pause(0.001) 
-    pass
+    return None
 
 def view_capsule_activation(model,device,x,label):
     activation = {}
@@ -40,4 +40,4 @@ def view_capsule_activation(model,device,x,label):
         plt.axis("off")
       print(f"Capsule: {key}, prediction: {preds[1]}, actual: {label[1]}")
       plt.show()
-    pass
+    return None

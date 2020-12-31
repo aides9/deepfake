@@ -36,7 +36,7 @@ class Eval():
         print('Log Loss:', log_loss(self.testlabels, self.predictions))
         print("Confusion Matrix:")
         print(confusion_matrix(self.testlabels, np.round(self.predictions)))
-        pass
+        return None
     
     def plot_precisionrecall(self):
         precision, recall, _ = precision_recall_curve([1- x for x in self.testlabels],[1-y for y in self.predictions])
@@ -46,7 +46,7 @@ class Eval():
         plt.ylabel("precision")
         plt.title("precision vs. recall curve")
         plt.show()
-        pass
+        return None
         
     def plot_roc(self):
         fpr, tpr, _ = roc_curve(self.testlabels,self.predictions)
@@ -59,7 +59,7 @@ class Eval():
         plt.ylabel('True Positive Rate')
         plt.xlabel('False Positive Rate')
         plt.show()
-        pass
+        return None
         
         
 
