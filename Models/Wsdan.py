@@ -15,7 +15,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from efficientnet_pytorch import EfficientNet as ef
-from xception_wsdan import xception
 
 __all__ = ['WSDAN']
 EPSILON = 1e-12
@@ -81,23 +80,35 @@ class BAP(nn.Module):
 
 # WS-DAN: Weakly Supervised Data Augmentation Network for FGVC
 class WSDAN(nn.Module):
-    def __init__(self, num_classes, M=32, net, pretrained=False):
+    def __init__(self, num_classes, M=32, net='inception_mixed_6e'):
         super(WSDAN, self).__init__()
         self.num_classes = num_classes
         self.M = M
         self.net = net
 
         # Network Initialization
+        if 'xception' in net:
+            self.features = xception()
+            self.num_features = 2048
 
-        if pretrained:
+            if pretrained:
+                ckpt = torch.load(pretrained, map_location='cpu')
+                state_dict = dict()
+
+                for k, v in ckpt["state_dict"].items():
+                    if k.startswith("model."):
+                        k = k[6:]
+                    elif k.startswith("module."):
+                        k = k[7:]
+                    state_dict[k] = v
+
+                self.features.load_state_dict(state_dict, strict=False)
+        elif 'efficientnet' in net:
             self.EFN = ef.from_pretrained(net)
             self.features = self.EFN.extract_features
             self.num_features = self.EFN._fc.in_features
         else:
-            self.EFN = ef.from_name('efficientnet-b0')
-            self.EFN.set_swish()
-            self.features = self.EFN.extract_features
-            self.num_features = 1536
+            raise ValueError('Unsupported net: %s' % net)
 
         # Attention Maps
         self.attentions = BasicConv2d(self.num_features, self.M, kernel_size=1)
@@ -115,7 +126,10 @@ class WSDAN(nn.Module):
 
         # Feature Maps, Attention Maps and Feature Matrix
         feature_maps = self.features(x)
-        attention_maps = self.attentions(feature_maps)
+        if self.net != 'inception_mixed_7c':
+            attention_maps = self.attentions(feature_maps)
+        else:
+            attention_maps = feature_maps[:, :self.M, ...]
 
         if dropout:
             feature_matrix, feature_matrixd = self.bap(feature_maps, attention_maps, dropout)
@@ -145,17 +159,3 @@ class WSDAN(nn.Module):
         # attention_map: (B, 2, H, W) in training, (B, 1, H, W) in val/testing
         return p, feature_matrix, attention_map
 
-    def load_state_dict(self, state_dict, strict=True):
-        model_dict = self.state_dict()
-        pretrained_dict = {k: v for k, v in state_dict.items()
-                           if k in model_dict and model_dict[k].size() == v.size()}
-
-        if len(pretrained_dict) == len(state_dict):
-            logging.info('%s: All params loaded' % type(self).__name__)
-        else:
-            logging.info('%s: Some params were not loaded:' % type(self).__name__)
-            not_loaded_keys = [k for k in state_dict.keys() if k not in pretrained_dict.keys()]
-            logging.info(('%s, ' * (len(not_loaded_keys) - 1) + '%s') % tuple(not_loaded_keys))
-
-        model_dict.update(pretrained_dict)
-        super(WSDAN, self).load_state_dict(model_dict)

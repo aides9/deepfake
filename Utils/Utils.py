@@ -3,7 +3,6 @@ Created on Thu Dec 31 04:25:24 2020
 
 @author: Jen
 """
-
 import torchvision
 import numpy as np
 import matplotlib.pyplot as plt

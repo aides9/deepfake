@@ -4,15 +4,15 @@ Revised: Dec 03,2019 - Yuchong Gu
 """
 import torch
 import random
+import os
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
+from tqdm import tqdm_notebook as tqdm
 
-
-##############################################
-# Center Loss for Attention Regularization
-##############################################
 class CenterLoss(nn.Module):
     def __init__(self):
         super(CenterLoss, self).__init__()
@@ -21,125 +21,6 @@ class CenterLoss(nn.Module):
     def forward(self, outputs, targets):
         return self.l2_loss(outputs, targets) / outputs.size(0)
 
-
-##################################
-# Metric
-##################################
-class Metric(object):
-    pass
-
-
-class AverageMeter(Metric):
-    def __init__(self, name='loss'):
-        self.name = name
-        self.reset()
-
-    def reset(self):
-        self.scores = 0.
-        self.total_num = 0.
-
-    def __call__(self, batch_score, sample_num=1):
-        self.scores += batch_score
-        self.total_num += sample_num
-        return self.scores / self.total_num
-
-
-class TopKAccuracyMetric(Metric):
-    def __init__(self, topk=(1,)):
-        self.name = 'topk_accuracy'
-        self.topk = topk
-        self.maxk = max(topk)
-        self.reset()
-
-    def reset(self):
-        self.corrects = np.zeros(len(self.topk))
-        self.num_samples = 0.
-
-    def __call__(self, output, target):
-        """Computes the precision@k for the specified values of k"""
-        self.num_samples += target.size(0)
-        _, pred = output.topk(self.maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-        for i, k in enumerate(self.topk):
-            correct_k = correct[:k].view(-1).float().sum(0)
-            self.corrects[i] += correct_k.item()
-
-        return self.corrects * 100. / self.num_samples
-
-
-##################################
-# Callback
-##################################
-class Callback(object):
-    def __init__(self):
-        pass
-
-    def on_epoch_begin(self):
-        pass
-
-    def on_epoch_end(self, *args):
-        pass
-
-
-class ModelCheckpoint(Callback):
-    def __init__(self, savepath, monitor='val_topk_accuracy', mode='max'):
-        self.savepath = savepath
-        self.monitor = monitor
-        self.mode = mode
-        self.reset()
-        super(ModelCheckpoint, self).__init__()
-
-    def reset(self):
-        if self.mode == 'max':
-            self.best_score = float('-inf')
-        else:
-            self.best_score = float('inf')
-
-    def set_best_score(self, score):
-        if isinstance(score, np.ndarray):
-            self.best_score = score[0]
-        else:
-            self.best_score = score
-
-    def on_epoch_begin(self):
-        pass
-
-    def on_epoch_end(self, logs, net, **kwargs):
-        current_score = logs[self.monitor]
-        if isinstance(current_score, np.ndarray):
-            current_score = current_score[0]
-
-        if (self.mode == 'max' and current_score > self.best_score) or \
-            (self.mode == 'min' and current_score < self.best_score):
-            self.best_score = current_score
-
-            if isinstance(net, torch.nn.DataParallel):
-                state_dict = net.module.state_dict()
-            else:
-                state_dict = net.state_dict()
-
-            for key in state_dict.keys():
-                state_dict[key] = state_dict[key].cpu()
-
-            if 'feature_center' in kwargs:
-                feature_center = kwargs['feature_center']
-                feature_center = feature_center.cpu()
-
-                torch.save({
-                    'logs': logs,
-                    'state_dict': state_dict,
-                    'feature_center': feature_center}, self.savepath)
-            else:
-                torch.save({
-                    'logs': logs,
-                    'state_dict': state_dict}, self.savepath)
-
-
-##################################
-# augment function
-##################################
 def batch_augment(images, attention_map, mode='crop', theta=0.5, padding_ratio=0.1):
     batches, _, imgH, imgW = images.size()
 
@@ -154,8 +35,7 @@ def batch_augment(images, attention_map, mode='crop', theta=0.5, padding_ratio=0
 
             crop_mask = F.upsample_bilinear(atten_map, size=(imgH, imgW)) >= theta_c
             nonzero_indices = torch.nonzero(crop_mask[0, 0, ...])
-#            if nonzero_indices.shape[0]==0:
-#                print(atten_map)
+
             height_min = max(int(nonzero_indices[:, 0].min().item() - padding_ratio * imgH), 0)
             height_max = min(int(nonzero_indices[:, 0].max().item() + padding_ratio * imgH), imgH)
             width_min = max(int(nonzero_indices[:, 1].min().item() - padding_ratio * imgW), 0)
@@ -185,26 +65,49 @@ def batch_augment(images, attention_map, mode='crop', theta=0.5, padding_ratio=0
         raise ValueError('Expected mode in [\'crop\', \'drop\'], but received unsupported augmentation method %s' % mode)
 
 
-##################################
-# transform in dataset
-##################################
-def get_transform(resize, phase='train'):
-    if phase == 'train':
-        return transforms.Compose([
-            transforms.Resize(size=(int(resize[0] / 0.875), int(resize[1] / 0.875))),
-            transforms.RandomCrop(resize),
-            transforms.RandomHorizontalFlip(0.5),
-            transforms.ColorJitter(brightness=0.126, saturation=0.5),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-    else:
-        return transforms.Compose([
-            transforms.Resize(size=(int(resize[0] / 0.875), int(resize[1] / 0.875))),
-            transforms.CenterCrop(resize),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
+def visualize_attention(model, dataset, device, visualize_save_path, batch_size=16):
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,shuffle=True)
+    ToPILImage = transforms.ToPILImage()
+    MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    fakehaimgs = []
+    realhaimgs = []
+
+    for i, (inputs, labels) in tqdm(enumerate(dataloader),total=len(dataloader)):
+        inputs = inputs.to(device)
+        preds, _, attention_maps = model(inputs)
+        attention_maps = F.upsample_bilinear(attention_maps, size=(inputs.size(2), inputs.size(3)))
+        attention_maps = torch.sqrt(attention_maps.cpu() / attention_maps.max().item())
+
+        heat_attention_maps = generate_heatmap(attention_maps)
+        raw_image = inputs.cpu() * STD + MEAN
+        heat_attention_image = raw_image * 0.5 + heat_attention_maps * 0.5
+        raw_attention_image = raw_image * attention_maps
+
+    for batch_idx in range(inputs.size(0)):
+        rimg = ToPILImage(raw_image[batch_idx])
+        raimg = ToPILImage(raw_attention_image[batch_idx])
+        haimg = ToPILImage(heat_attention_image[batch_idx])
+        rimg.save(os.path.join(visualize_save_path, '%03d_raw.jpg' % (i * batch_size + batch_idx)))
+        raimg.save(os.path.join(visualize_save_path, '%03d_raw_atten.jpg' % (i * batch_size + batch_idx)))
+        haimg.save(os.path.join(visualize_save_path, '%03d_heat_atten.jpg' % (i * batch_size + batch_idx)))
+        if labels[batch_idx] == 0:
+          fakehaimgs.append(haimg)
+        else: 
+          realhaimgs.append(haimg)
+
+    _, axes = plt.subplots(nrows=2, ncols=5, figsize=(24, 10))
+    for idx, image in enumerate(fakehaimgs[:5], start=0):
+        axes.ravel()[idx].imshow(image)
+        axes.ravel()[idx].axis('off')
+        axes.ravel()[idx].set_title("Label:Fake")
+    plt.tight_layout()
+
+    for idx, image in enumerate(realhaimgs[:5], start=5):
+        axes.ravel()[idx].imshow(image)
+        axes.ravel()[idx].axis('off')
+        axes.ravel()[idx].set_title("Label:Real")
+    plt.tight_layout()
 
 def generate_heatmap(attention_maps):
     heat_attention_maps = []

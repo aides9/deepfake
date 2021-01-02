@@ -11,12 +11,13 @@ from tqdm import tqdm_notebook as tqdm
 from sklearn.metrics import f1_score, precision_score, recall_score, confusion_matrix, auc, roc_curve, log_loss, precision_recall_curve, average_precision_score
 
 class Eval():
-    def __init__(self, model, dataset, device):
+    def __init__(self, model, dataset, device, utils=None):
         self.model = model
         self.dataset = dataset
         self.device = device
         self.testlabels = []
         self.predictions = []
+        self.utils = utils
 
     def run(self, batch_size=16):
         loader = torch.utils.data.DataLoader(self.dataset, batch_size=batch_size,shuffle=True)
@@ -26,6 +27,15 @@ class Eval():
           inputs = inputs.to(self.device)
           if hasattr(self.model, 'CapsuleNet'):
             _, preds = self.model(inputs)
+          elif hasattr(self.model, 'bap'):
+
+            y_pred_raw, _, attention_map = self.model(inputs)
+
+            crop_images =  self.utils.batch_augment(inputs, attention_map, mode='crop', theta=0.1, padding_ratio=0.05)
+            y_pred_crop, _, _ = self.model(crop_images)
+
+            preds = (y_pred_raw + y_pred_crop) / 2.
+            preds = torch.sigmoid(preds[:,1])
           else:
             preds = self.model(inputs)
             preds = torch.sigmoid(preds)

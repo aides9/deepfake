@@ -1,15 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Created on Thu Dec 31 04:25:24 2020
+Created on Thu Dec 31 17:38:27 2020
 
 @author: Jen
 """
 
 import torch
-import torch.nn as nn
 import numpy as np
 import time, os, copy
 import torch.optim as optim
-import torch.nn.functional as F
 from torch.utils.data import DataLoader,Dataset
 from torch.utils.data.sampler import SubsetRandomSampler
 from torch.optim import lr_scheduler
@@ -17,7 +16,7 @@ from tqdm import tqdm_notebook as tqdm
 
 class Train():
     
-    def __init__(self, model, dataset, device, writer, config=None, utils=None, batch_size=16):
+    def __init__(self, model, dataset, device, writer, batch_size=16):
         self.model = model
         self.writer = writer
         self.dataset = dataset
@@ -25,9 +24,6 @@ class Train():
         self.batch_size = batch_size
         self.dataset_sizes = {}
         self.class_names = []
-        self.config = config
-        self.utils = utils
-        self.feature_center = None
         
     def create_loader(self):
 
@@ -56,12 +52,11 @@ class Train():
         
     def run(self, num_epochs=10, criterion=None, optimizer=None, scheduler=None):
       
-        criterion = criterion or torch.nn.BCEWithLogitsLoss().to(self.device)
+        criterion = criterion or torch.nn.BCEWithLogitsLoss()
         optimizer = optimizer or optim.Adam(self.model.parameters(), lr=0.0001)
         scheduler = scheduler or lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
         dataloaders = self.create_loader()
-
         self.model = self.model.to(self.device)
         since = time.time()
         
@@ -90,8 +85,8 @@ class Train():
     
                 # Iterate over data.
                 for idx, (inputs, labels) in tqdm(enumerate(dataloaders[phase]),total=len(dataloaders[phase])):
-                    inputs = inputs.to(self.device, non_blocking=True, dtype=torch.float)
-                    labels = labels.to(self.device, non_blocking=True, dtype=torch.float)
+                    inputs = inputs.to(self.device,dtype=torch.float)
+                    labels = labels.to(self.device,dtype=torch.float)
     
                     # zero the parameter gradients
                     optimizer.zero_grad()
@@ -100,7 +95,7 @@ class Train():
                     # Track history if only in training phase
                     with torch.set_grad_enabled(phase == 'train'):
 
-                        loss, preds = self.get_loss_preds(inputs, labels, criterion, phase)
+                        loss, preds = self.get_loss_preds(inputs, labels, criterion)
 
                         # backward + optimize only if in training phase
                         if phase == 'train':
@@ -124,10 +119,6 @@ class Train():
                 
                 # Update gradient in epoch level
                 scheduler.step()
-
-                # Update attention feature if exist
-                if self.feature_center is not None: 
-                    self.feature_center*=2  
     
                 # Deep copy the model
                 if phase == 'val' and epoch_acc > best_acc:
@@ -150,45 +141,11 @@ class Train():
         
         return self.model, dataloaders
 
-    def get_loss_preds(self, inputs,labels,criterion, phase):
-      
+    def get_loss_preds(self, inputs,labels,criterion):
         if hasattr(self.model, 'CapsuleNet'):
            outputs, preds = self.model(inputs)
            loss = criterion(outputs, labels)
            preds = torch.unsqueeze(torch.round(preds), 1)
-        
-        elif hasattr(self.model, 'bap'):
-          if (phase=='train'):
-              if(self.feature_center is None):
-                self.feature_center = torch.zeros(self.config.num_classes, self.config.num_attentions * self.model.num_features, device=self.device)
-
-              y_pred_raw, feature_matrix, attention_map = self.model(inputs, dropout=True)
-              feature_center_batch = F.normalize(self.feature_center[labels.type(torch.LongTensor)], dim=-1)
-              self.feature_center[labels.type(torch.LongTensor)] += self.config.beta * (feature_matrix.detach() - feature_center_batch)
-              
-              with torch.no_grad():
-                  crop_images = self.utils.batch_augment(inputs, attention_map[:, :1, :, :], mode='crop', theta=(0.4, 0.6), padding_ratio=0.1)
-      
-              y_pred_crop, _, _ = self.model(crop_images)
-              with torch.no_grad():
-                  drop_images = self.utils.batch_augment(inputs, attention_map[:, 1:, :, :], mode='drop', theta=(0.4, 0.7))
-
-              y_pred_drop, _, _ = self.model(drop_images)
-              center_loss = self.utils.CenterLoss().to(self.device)
-              loss = criterion(y_pred_raw, labels.long()) + \
-                  criterion(y_pred_crop, labels.long()) / 3. + \
-                  criterion(y_pred_drop,labels.long()) / 2. + \
-                  center_loss(feature_matrix, feature_center_batch)
-
-              preds = torch.unsqueeze(torch.argmax(y_pred_raw, 1), 1)
-
-          elif(phase=='val'):
-              y_pred_raw, _, attention_map = self.model(inputs)
-              crop_images = self.utils.batch_augment(inputs, attention_map, mode='crop', theta=0.1, padding_ratio=0.05)
-              y_pred_crop, _, _ = self.model(crop_images)
-              y_pred = (y_pred_raw + y_pred_crop) / 2.
-              loss = criterion(y_pred, labels.long())
-              preds = torch.unsqueeze(torch.argmax(y_pred, 1), 1)
 
         else :
            outputs = self.model(inputs)
@@ -203,9 +160,3 @@ class Train():
     
     def get_dataset_size():
         return self.dataset_size
-
-
-    
-
-
-
