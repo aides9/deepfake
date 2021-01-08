@@ -11,3 +11,5 @@ DFDC: https://www.kaggle.com/c/deepfake-detection-challenge/data
 ![ROC Plot](https://github.com/aides9/deepfake_video_detection/blob/main/Plots/roc_plot.png)
 
 ![Precision_Recall_Plot](https://github.com/aides9/deepfake_video_detection/blob/main/Plots/precision_recall_plot.png)
+
+![AttentionMapPlot](https://github.com/aides9/deepfake_video_detection-developing-/blob/main/Plots/WS-DAN_plot.png)
